@@ -1,255 +1,434 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Real Driving Final</title>
+<title>Ultimate Car Game</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
 <style>
-body { margin:0; overflow:hidden; }
+body { margin:0; overflow:hidden; background:#87ceeb; }
 
-#ui{
+#scoreUI {
  position:absolute; top:10px; left:10px;
  color:white; background:rgba(0,0,0,0.6);
+ padding:10px; border-radius:8px;
+}
+
+#speedometer{
+ position:absolute;
+ bottom:90px;
+ left:50%;
+ transform:translateX(-50%);
+ color:white;
+ background:rgba(0,0,0,0.6);
+ padding:10px 20px;
+ border-radius:10px;
+ font-size:18px;
+}
+
+#musicBtn{
+ position:absolute;
+ top:10px;
+ right:10px;
  padding:10px;
+ z-index:10;
 }
 
-.controls{
- position:absolute; bottom:20px;
- width:100%; display:flex;
- justify-content:space-around;
+#game-over {
+ position:absolute; top:50%; left:50%;
+ transform:translate(-50%,-50%);
+ background:red; color:white;
+ padding:20px; display:none;
 }
 
-.btn{
- width:65px;height:65px;
+.controls {
+ position:absolute; bottom:20px; width:100%;
+ display:flex; justify-content:space-around;
+}
+
+.btn {
+ width:70px; height:70px;
  background:rgba(255,255,255,0.3);
  border-radius:50%;
- display:flex;align-items:center;justify-content:center;
- color:white;
+ display:flex; align-items:center; justify-content:center;
+ color:white; font-size:24px;
 }
 </style>
 </head>
 
 <body>
 
-<div id="ui">Speed: 0</div>
-
-<div class="controls">
-<div class="btn" id="left">←</div>
-<div class="btn" id="right">→</div>
-<div class="btn" id="up">↑</div>
-<div class="btn" id="brake">🛑</div>
+<div id="scoreUI">
+Score: <span id="score">0</span><br>
+High Score: <span id="highScore">0</span>
 </div>
 
+<div id="speedometer">
+Speed: <span id="speed">0</span> km/h
+</div>
+
+<button id="musicBtn">🎵 Music</button>
+
+<div id="game-over">
+<h2>💥 GAME OVER</h2>
+<button onclick="location.reload()">RESTART</button>
+</div>
+
+<div class="controls">
+<div style="display:flex; gap:10px;">
+<div class="btn" id="lBtn">←</div>
+<div class="btn" id="rBtn">→</div>
+</div>
+<div style="display:flex; gap:10px;">
+<div class="btn" id="uBtn">↑</div>
+<div class="btn" id="dBtn">↓</div>
+</div>
+</div>
+
+<audio id="bgm" loop>
+<source src="https://cdn.pixabay.com/audio/2022/03/15/audio_115b9b4c3d.mp3">
+</audio>
+
+<audio id="engineSound" loop>
+<source src="https://cdn.pixabay.com/audio/2022/03/15/audio_c8c8a73467.mp3">
+</audio>
+
+<audio id="crashSound">
+<source src="https://cdn.pixabay.com/audio/2022/03/15/audio_4c1ab9c7a3.mp3">
+</audio>
+
 <script>
-// Scene
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x000022);
 
-// Camera
-const camera = new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,2000);
+let gameOver=false, speed=0;
+let score=0;
+let highScore=localStorage.getItem("highScore") || 0;
+document.getElementById("highScore").innerText=highScore;
 
-// Renderer
-const renderer = new THREE.WebGLRenderer({antialias:true});
+const bgm=document.getElementById("bgm");
+const engineSound=document.getElementById("engineSound");
+const crashSound=document.getElementById("crashSound");
+
+engineSound.volume=0.3;
+
+document.getElementById("musicBtn").onclick=()=>{
+  bgm.play().catch(()=>{});
+};
+
+let musicStarted=false;
+let steer=0, drift=0;
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+scene.fog=new THREE.Fog(0x87ceeb,50,150);
+
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// Lights
-scene.add(new THREE.AmbientLight(0xaaaaaa));
+scene.add(new THREE.AmbientLight(0xffffff,0.7));
 
-// 🌙 Moon
-const moon = new THREE.Mesh(
+let move={l:0,r:0,u:0,d:0};
+['l','r','u','d'].forEach(k=>{
+ let b=document.getElementById(k+'Btn');
+
+ b.onpointerdown=()=>{
+   move[k]=1;
+   if(!musicStarted){
+     bgm.play().catch(()=>{});
+     engineSound.play().catch(()=>{});
+     musicStarted=true;
+   }
+ };
+ b.onpointerup=()=>move[k]=0;
+});
+
+// ☁️ CLOUDS
+let clouds=[];
+function createCloud(){
+ let g=new THREE.Group();
+ for(let i=0;i<5;i++){
+   let c=new THREE.Mesh(
+     new THREE.SphereGeometry(2+Math.random()*1.5,16,16),
+     new THREE.MeshPhongMaterial({color:0xffffff})
+   );
+   c.position.set(Math.random()*5, Math.random()*2, Math.random()*5);
+   g.add(c);
+ }
+ g.position.set(Math.random()*50-25,20+Math.random()*10,-Math.random()*200);
+ scene.add(g);
+ clouds.push(g);
+}
+for(let i=0;i<8;i++) createCloud();
+
+// ☀️ DARK GLOWING SUN
+const sunGroup = new THREE.Group();
+
+const sun = new THREE.Mesh(
  new THREE.SphereGeometry(5,32,32),
- new THREE.MeshBasicMaterial({color:0xffffff})
+ new THREE.MeshBasicMaterial({color:0xff5500})
 );
-moon.position.set(50,50,-100);
-scene.add(moon);
+sunGroup.add(sun);
 
-// ⭐ Stars
-for(let i=0;i<200;i++){
- let star = new THREE.Mesh(
-  new THREE.SphereGeometry(0.2),
-  new THREE.MeshBasicMaterial({color:0xffffff})
+const glow = new THREE.Mesh(
+ new THREE.SphereGeometry(7,32,32),
+ new THREE.MeshBasicMaterial({color:0xff7744, transparent:true, opacity:0.35})
+);
+sunGroup.add(glow);
+
+const shine = new THREE.Mesh(
+ new THREE.SphereGeometry(9,32,32),
+ new THREE.MeshBasicMaterial({color:0xffaa66, transparent:true, opacity:0.15})
+);
+sunGroup.add(shine);
+
+sunGroup.position.set(0,25,-120);
+scene.add(sunGroup);
+
+function createBuilding(x,z){
+ let g=new THREE.Group();
+
+ let body=new THREE.Mesh(
+  new THREE.BoxGeometry(6,10,6),
+  new THREE.MeshPhongMaterial({color:Math.random()*0xffffff})
  );
- star.position.set(
-  Math.random()*200-100,
-  Math.random()*100,
-  Math.random()*-200
+ body.position.y=5;
+ g.add(body);
+
+ let door=new THREE.Mesh(
+  new THREE.PlaneGeometry(2,3),
+  new THREE.MeshBasicMaterial({color:0x4b2e1e})
  );
- scene.add(star);
+ door.position.set(0,1.5,3.01);
+ g.add(door);
+
+ let glass=new THREE.Mesh(
+  new THREE.PlaneGeometry(2.5,2.5),
+  new THREE.MeshPhongMaterial({
+    color:0x88ccff,
+    transparent:true,
+    opacity:0.6,
+    shininess:100
+  })
+ );
+ glass.position.set(0,6,3.01);
+ g.add(glass);
+
+ g.position.set(x,0,z);
+ return g;
 }
 
-// Ground
-const ground = new THREE.Mesh(
- new THREE.PlaneGeometry(500,2000),
- new THREE.MeshPhongMaterial({color:0x003300})
-);
-ground.rotation.x=-Math.PI/2;
-scene.add(ground);
+function createTree(x,z){
+ let g=new THREE.Group();
 
-// Road group
-const roadGroup = new THREE.Group();
-scene.add(roadGroup);
+ let trunk=new THREE.Mesh(
+  new THREE.CylinderGeometry(0.3,0.5,2),
+  new THREE.MeshPhongMaterial({color:0x8b4513})
+ );
+ trunk.position.y=1;
+ g.add(trunk);
 
-function createSegment(z){
- let g = new THREE.Group();
+ let leaves=new THREE.Mesh(
+  new THREE.ConeGeometry(1.5,4,8),
+  new THREE.MeshPhongMaterial({color:0x0a8f08})
+ );
+ leaves.position.y=4;
+ g.add(leaves);
 
- // road
- let road = new THREE.Mesh(
-  new THREE.PlaneGeometry(20,100),
-  new THREE.MeshPhongMaterial({color:0x222222})
+ g.position.set(x,0,z);
+ return g;
+}
+
+function createRailing(x){
+ let g=new THREE.Group();
+
+ for(let i=-50;i<=50;i+=6){
+   let pole=new THREE.Mesh(
+     new THREE.CylinderGeometry(0.1,0.1,1.2),
+     new THREE.MeshPhongMaterial({color:0xaaaaaa})
+   );
+   pole.position.set(x,0.6,i);
+   g.add(pole);
+ }
+
+ let bar1=new THREE.Mesh(
+   new THREE.BoxGeometry(0.2,0.2,100),
+   new THREE.MeshPhongMaterial({color:0xffffff})
+ );
+ bar1.position.set(x,1.1,0);
+ g.add(bar1);
+
+ let bar2=bar1.clone();
+ bar2.position.y=0.6;
+ g.add(bar2);
+
+ return g;
+}
+
+function createRoad(z){
+ let g=new THREE.Group();
+
+ let road=new THREE.Mesh(
+  new THREE.PlaneGeometry(16,100),
+  new THREE.MeshPhongMaterial({color:0x333333})
  );
  road.rotation.x=-Math.PI/2;
  g.add(road);
 
- // center line
- let line = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.5,100),
-  new THREE.MeshBasicMaterial({color:0xffffff})
- );
- line.rotation.x=-Math.PI/2;
- line.position.y=0.01;
- g.add(line);
-
- // railings
- for(let i=-40;i<40;i+=10){
-  let r1 = new THREE.Mesh(
-   new THREE.BoxGeometry(0.3,1,5),
-   new THREE.MeshPhongMaterial({color:0xaaaaaa})
-  );
-  r1.position.set(-10,0.5,i);
-  g.add(r1);
-
-  let r2 = r1.clone();
-  r2.position.x = 10;
-  g.add(r2);
+ for(let i=-45;i<=45;i+=10){
+   let line=new THREE.Mesh(
+     new THREE.PlaneGeometry(0.4,5),
+     new THREE.MeshBasicMaterial({color:0xffffff})
+   );
+   line.rotation.x=-Math.PI/2;
+   line.position.set(0,0.01,i);
+   g.add(line);
  }
 
- g.position.z = z;
+ g.add(createRailing(-8));
+ g.add(createRailing(8));
+
+ let type=Math.random()>0.5;
+
+ for(let i=0;i<3;i++){
+  let zpos=-40+i*40;
+
+  if(type){
+    g.add(createBuilding(15,zpos));
+    g.add(createBuilding(-15,zpos-20));
+  } else {
+    g.add(createTree(15,zpos));
+    g.add(createTree(-15,zpos-20));
+  }
+ }
+
+ g.position.z=z;
+ scene.add(g);
  return g;
 }
 
-// segments
-let segments=[];
-for(let i=0;i<6;i++){
- segments.push(createSegment(-i*100));
- segments.forEach(s=>roadGroup.add(s));
-}
+let segments=[createRoad(0),createRoad(-100),createRoad(-200)];
 
-// 🌳 Trees
-for(let i=0;i<50;i++){
- let tree = new THREE.Mesh(
-  new THREE.ConeGeometry(2,6),
-  new THREE.MeshPhongMaterial({color:0x00aa00})
+function createCar(color){
+ let g=new THREE.Group();
+
+ let body=new THREE.Mesh(
+  new THREE.BoxGeometry(2.5,1,4.5),
+  new THREE.MeshPhongMaterial({color})
  );
- tree.position.set(15+Math.random()*10,3,-i*40);
- scene.add(tree);
+ body.position.y=0.6;
+ g.add(body);
 
- let t2 = tree.clone();
- t2.position.x *= -1;
- scene.add(t2);
+ let roof=new THREE.Mesh(
+  new THREE.BoxGeometry(1.8,0.6,2),
+  new THREE.MeshPhongMaterial({color:0x222})
+ );
+ roof.position.set(0,1.3,0);
+ g.add(roof);
+
+ let m1=new THREE.Mesh(
+  new THREE.BoxGeometry(0.3,0.3,0.3),
+  new THREE.MeshPhongMaterial({color:0x000})
+ );
+ m1.position.set(1.4,1,0.8);
+ g.add(m1);
+
+ let m2=m1.clone();
+ m2.position.x=-1.4;
+ g.add(m2);
+
+ for(let i=-1;i<=1;i+=2){
+  let w=new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5,0.5,0.5,10),
+    new THREE.MeshPhongMaterial({color:0x000})
+  );
+  w.rotation.z=Math.PI/2;
+  w.position.set(i,0.3,1.5);
+  g.add(w);
+
+  let w2=w.clone();
+  w2.position.z=-1.5;
+  g.add(w2);
+ }
+
+ return g;
 }
 
-// 🚗 Car
-const car = new THREE.Group();
+const playerCar=createCar(0x0077ff);
+scene.add(playerCar);
 
-let body = new THREE.Mesh(
- new THREE.BoxGeometry(2,1,4),
- new THREE.MeshPhongMaterial({color:0x0077ff})
-);
-body.position.y=1;
-car.add(body);
-
-// headlights
-let h1 = new THREE.PointLight(0xffffff,1,20);
-h1.position.set(-0.5,1,-2);
-car.add(h1);
-
-let h2 = h1.clone();
-h2.position.x = 0.5;
-car.add(h2);
-
-scene.add(car);
-
-// traffic
 let traffic=[];
-for(let i=0;i<3;i++){
- let t = new THREE.Mesh(
-  new THREE.BoxGeometry(2,1,4),
-  new THREE.MeshPhongMaterial({color:0xff0000})
- );
- t.position.set((Math.random()*2-1)*5,1,-i*80);
+for(let i=0;i<4;i++){
+ let t=createCar(Math.random()*0xffffff);
+ t.position.set(Math.random()*10-5,0.6,-50-(i*40));
  scene.add(t);
  traffic.push(t);
 }
 
-// controls
-let move={l:0,r:0,u:0,b:0};
-let speed=0;
-
-function bind(id,k){
- let e=document.getElementById(id);
- e.onpointerdown=()=>move[k]=1;
- e.onpointerup=()=>move[k]=0;
-}
-bind("left","l");
-bind("right","r");
-bind("up","u");
-bind("brake","b");
-
-// curve control
-let roadCurve = 0;
-
 function animate(){
+ if(gameOver) return;
  requestAnimationFrame(animate);
 
- if(move.u) speed+=0.01;
- else speed*=0.98;
- if(move.b) speed*=0.9;
+ if(move.u) speed=Math.min(speed+0.01,1.2);
+ else if(move.d) speed=Math.max(speed-0.02,0);
+ else speed=Math.max(speed-0.005,0.2);
 
- car.position.z -= speed;
+ playerCar.position.z -= speed;
 
- // curve
- roadCurve = Math.sin(car.position.z * 0.02) * 5;
+ if(move.l) steer -= 0.03;
+ if(move.r) steer += 0.03;
+ steer*=0.9;
+ drift+=(steer-drift)*0.15;
 
- if(move.l) car.position.x -= 0.15;
- if(move.r) car.position.x += 0.15;
+ playerCar.position.x += drift*0.8;
+ playerCar.rotation.y = -drift;
 
- car.position.x += (roadCurve - car.position.x) * 0.02;
+ playerCar.position.x=Math.max(-6.5,Math.min(6.5,playerCar.position.x));
 
- car.position.x = Math.max(-8, Math.min(8, car.position.x));
+ engineSound.playbackRate=0.5+speed;
 
- // endless
+ score+=speed*2;
+ document.getElementById("score").innerText=Math.floor(score);
+ document.getElementById("speed").innerText=Math.floor(speed*120);
+
+ camera.position.set(playerCar.position.x,6,playerCar.position.z+12);
+ camera.lookAt(playerCar.position.x,1,playerCar.position.z-5);
+
+ // ☀️ SUN FOLLOW
+ sunGroup.position.x = camera.position.x;
+ sunGroup.position.z = camera.position.z - 120;
+
  segments.forEach(s=>{
-  if(s.position.z > car.position.z + 50){
-    s.position.z -= 600;
-  }
+  if(s.position.z > camera.position.z+50) s.position.z -=300;
  });
 
- // traffic
+ clouds.forEach(c=>{
+   c.position.z +=0.1;
+   if(c.position.z > camera.position.z+50){
+     c.position.z -=300;
+   }
+ });
+
  traffic.forEach(t=>{
-  t.position.z += speed+0.3;
+  t.position.z -=0.3;
 
-  if(t.position.z > car.position.z+20){
-    t.position.z -= 400;
-    t.position.x = (Math.random()*2-1)*5;
+  if(t.position.z > camera.position.z+10){
+    t.position.z -=200;
+    t.position.x=Math.random()*10-5;
   }
 
-  if(car.position.distanceTo(t.position)<2){
-    alert("CRASH 💥");
-    location.reload();
+  if(playerCar.position.distanceTo(t.position)<3){
+    gameOver=true;
+    crashSound.play();
+    document.getElementById("game-over").style.display="block";
   }
  });
-
- // camera
- camera.position.set(car.position.x,6,car.position.z+12);
- camera.lookAt(car.position);
-
- document.getElementById("ui").innerText="Speed: "+Math.floor(speed*100);
 
  renderer.render(scene,camera);
 }
+
 animate();
+
 </script>
 
 </body>
